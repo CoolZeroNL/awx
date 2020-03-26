@@ -5,17 +5,25 @@ import { t } from '@lingui/macro';
 import { Link } from 'react-router-dom';
 import {
   Button,
-  DataListAction,
-  DataListCell,
+  DataListAction as _DataListAction,
   DataListCheck,
   DataListItem,
   DataListItemRow,
   DataListItemCells,
   Tooltip,
 } from '@patternfly/react-core';
-import { PencilAltIcon } from '@patternfly/react-icons';
+import DataListCell from '@components/DataListCell';
 
+import { PencilAltIcon } from '@patternfly/react-icons';
 import { Credential } from '@types';
+import styled from 'styled-components';
+
+const DataListAction = styled(_DataListAction)`
+  align-items: center;
+  display: grid;
+  grid-gap: 16px;
+  grid-template-columns: 40px;
+`;
 
 function CredentialListItem({
   credential,
@@ -57,7 +65,7 @@ function CredentialListItem({
           aria-labelledby={labelId}
           id={labelId}
         >
-          {canEdit && (
+          {canEdit ? (
             <Tooltip content={i18n._(t`Edit Credential`)} position="top">
               <Button
                 variant="plain"
@@ -67,6 +75,8 @@ function CredentialListItem({
                 <PencilAltIcon />
               </Button>
             </Tooltip>
+          ) : (
+            ''
           )}
         </DataListAction>
       </DataListItemRow>

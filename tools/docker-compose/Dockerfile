@@ -30,6 +30,7 @@ RUN dnf -y update && \
   make \
   mercurial \
   nginx \
+  nmap-ncat \
   nodejs \
   nss \
   openldap-devel \
@@ -45,11 +46,13 @@ RUN dnf -y update && \
   python3-pycurl \
   rsync \
   subversion \
+  strace \
   sudo \
   swig \
+  tcpdump \
   tmux \
   unzip \
-  vim-minimal \
+  vim \
   which \
   xmlsec1 \
   xmlsec1-devel \
@@ -121,9 +124,9 @@ ENV LC_ALL en_US.UTF-8
 
 ADD tools/docker-compose/nginx.conf /etc/nginx/nginx.conf
 ADD tools/docker-compose/nginx.vh.default.conf /etc/nginx/conf.d/nginx.vh.default.conf
-ADD tools/docker-compose/start_development.sh /start_development.sh
+ADD tools/docker-compose/launch_awx.sh /usr/bin/launch_awx.sh
 ADD tools/docker-compose/start_tests.sh /start_tests.sh
-ADD tools/docker-compose/bootstrap_development.sh /bootstrap_development.sh
+ADD tools/docker-compose/bootstrap_development.sh /usr/bin/bootstrap_development.sh
 
 EXPOSE 8043 8013 8080 22
 

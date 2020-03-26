@@ -151,7 +151,7 @@ def inform_cluster_of_shutdown():
         logger.exception('Encountered problem with normal shutdown signal.')
 
 
-@task()
+@task(queue=get_local_queuename)
 def apply_cluster_membership_policies():
     started_waiting = time.time()
     with advisory_lock('cluster_policy_lock', wait=True):
@@ -264,7 +264,7 @@ def apply_cluster_membership_policies():
         logger.debug('Cluster policy computation finished in {} seconds'.format(time.time() - started_compute))
 
 
-@task(queue='tower_broadcast_all', exchange_type='fanout')
+@task(queue='tower_broadcast_all')
 def handle_setting_changes(setting_keys):
     orig_len = len(setting_keys)
     for i in range(orig_len):
@@ -275,7 +275,7 @@ def handle_setting_changes(setting_keys):
     cache.delete_many(cache_keys)
 
 
-@task(queue='tower_broadcast_all', exchange_type='fanout')
+@task(queue='tower_broadcast_all')
 def delete_project_files(project_path):
     # TODO: possibly implement some retry logic
     lock_file = project_path + '.lock'
@@ -293,7 +293,7 @@ def delete_project_files(project_path):
             logger.exception('Could not remove lock file {}'.format(lock_file))
 
 
-@task(queue='tower_broadcast_all', exchange_type='fanout')
+@task(queue='tower_broadcast_all')
 def profile_sql(threshold=1, minutes=1):
     if threshold == 0:
         cache.delete('awx-profile-sql-threshold')
@@ -307,7 +307,7 @@ def profile_sql(threshold=1, minutes=1):
         logger.error('SQL QUERIES >={}s ENABLED FOR {} MINUTE(S)'.format(threshold, minutes))
 
 
-@task()
+@task(queue=get_local_queuename)
 def send_notifications(notification_list, job_id=None):
     if not isinstance(notification_list, list):
         raise TypeError("notification_list should be of type list")
@@ -336,7 +336,7 @@ def send_notifications(notification_list, job_id=None):
                 logger.exception('Error saving notification {} result.'.format(notification.id))
 
 
-@task()
+@task(queue=get_local_queuename)
 def gather_analytics():
     from awx.conf.models import Setting
     from rest_framework.fields import DateTimeField
@@ -489,10 +489,10 @@ def awx_isolated_heartbeat():
     # Slow pass looping over isolated IGs and their isolated instances
     if len(isolated_instance_qs) > 0:
         logger.debug("Managing isolated instances {}.".format(','.join([inst.hostname for inst in isolated_instance_qs])))
-        isolated_manager.IsolatedManager().health_check(isolated_instance_qs)
+        isolated_manager.IsolatedManager(CallbackQueueDispatcher.dispatch).health_check(isolated_instance_qs)
 
 
-@task()
+@task(queue=get_local_queuename)
 def awx_periodic_scheduler():
     with advisory_lock('awx_periodic_scheduler_lock', wait=False) as acquired:
         if acquired is False:
@@ -549,7 +549,7 @@ def awx_periodic_scheduler():
         state.save()
 
 
-@task()
+@task(queue=get_local_queuename)
 def handle_work_success(task_actual):
     try:
         instance = UnifiedJob.get_instance_by_type(task_actual['type'], task_actual['id'])
@@ -562,7 +562,7 @@ def handle_work_success(task_actual):
     schedule_task_manager()
 
 
-@task()
+@task(queue=get_local_queuename)
 def handle_work_error(task_id, *args, **kwargs):
     subtasks = kwargs.get('subtasks', None)
     logger.debug('Executing error task id %s, subtasks: %s' % (task_id, str(subtasks)))
@@ -602,7 +602,26 @@ def handle_work_error(task_id, *args, **kwargs):
         pass
 
 
-@task()
+@task(queue=get_local_queuename)
+def handle_success_and_failure_notifications(job_id):
+    uj = UnifiedJob.objects.get(pk=job_id)
+    retries = 0
+    while retries < 5:
+        if uj.finished:
+            uj.send_notification_templates('succeeded' if uj.status == 'successful' else 'failed')
+            return
+        else:
+            # wait a few seconds to avoid a race where the
+            # events are persisted _before_ the UJ.status
+            # changes from running -> successful
+            retries += 1
+            time.sleep(1)
+            uj = UnifiedJob.objects.get(pk=job_id)
+
+    logger.warn(f"Failed to even try to send notifications for job '{uj}' due to job not being in finished state.")
+
+
+@task(queue=get_local_queuename)
 def update_inventory_computed_fields(inventory_id):
     '''
     Signal handler and wrapper around inventory.update_computed_fields to
@@ -644,7 +663,7 @@ def update_smart_memberships_for_inventory(smart_inventory):
     return False
 
 
-@task()
+@task(queue=get_local_queuename)
 def update_host_smart_inventory_memberships():
     smart_inventories = Inventory.objects.filter(kind='smart', host_filter__isnull=False, pending_deletion=False)
     changed_inventories = set([])
@@ -660,7 +679,7 @@ def update_host_smart_inventory_memberships():
         smart_inventory.update_computed_fields()
 
 
-@task()
+@task(queue=get_local_queuename)
 def delete_inventory(inventory_id, user_id, retries=5):
     # Delete inventory as user
     if user_id is None:
@@ -1162,7 +1181,6 @@ class BaseTask(object):
             except json.JSONDecodeError:
                 pass
 
-        should_write_event = False
         event_data.setdefault(self.event_data_key, self.instance.id)
         self.dispatcher.dispatch(event_data)
         self.event_ct += 1
@@ -1174,13 +1192,17 @@ class BaseTask(object):
             self.instance.artifacts = event_data['event_data']['artifact_data']
             self.instance.save(update_fields=['artifacts'])
 
-        return should_write_event
+        return False
 
     def cancel_callback(self):
         '''
         Ansible runner callback to tell the job when/if it is canceled
         '''
-        self.instance = self.update_model(self.instance.pk)
+        unified_job_id = self.instance.pk
+        self.instance = self.update_model(unified_job_id)
+        if not self.instance:
+            logger.error('unified job {} was deleted while running, canceling'.format(unified_job_id))
+            return True
         if self.instance.cancel_flag or self.instance.status == 'canceled':
             cancel_wait = (now() - self.instance.modified).seconds if self.instance.modified else 0
             if cancel_wait > 5:
@@ -1370,6 +1392,7 @@ class BaseTask(object):
                 if not params[v]:
                     del params[v]
 
+            self.dispatcher = CallbackQueueDispatcher()
             if self.instance.is_isolated() or containerized:
                 module_args = None
                 if 'module_args' in params:
@@ -1384,6 +1407,7 @@ class BaseTask(object):
 
                 ansible_runner.utils.dump_artifacts(params)
                 isolated_manager_instance = isolated_manager.IsolatedManager(
+                    self.event_handler,
                     canceled_callback=lambda: self.update_model(self.instance.pk).cancel_flag,
                     check_callback=self.check_handler,
                     pod_manager=pod_manager
@@ -1393,11 +1417,9 @@ class BaseTask(object):
                                                            params.get('playbook'),
                                                            params.get('module'),
                                                            module_args,
-                                                           event_data_key=self.event_data_key,
                                                            ident=str(self.instance.pk))
                 self.event_ct = len(isolated_manager_instance.handled_events)
             else:
-                self.dispatcher = CallbackQueueDispatcher()
                 res = ansible_runner.interface.run(**params)
                 status = res.status
                 rc = res.rc
@@ -1475,7 +1497,7 @@ class BaseTask(object):
 
 
 
-@task()
+@task(queue=get_local_queuename)
 class RunJob(BaseTask):
     '''
     Run a job using ansible-playbook.
@@ -1805,7 +1827,7 @@ class RunJob(BaseTask):
                 current_revision = git_repo.head.commit.hexsha
                 if desired_revision == current_revision:
                     job_revision = desired_revision
-                    logger.info('Skipping project sync for {} because commit is locally available'.format(job.log_format))
+                    logger.debug('Skipping project sync for {} because commit is locally available'.format(job.log_format))
                 else:
                     sync_needs = all_sync_needs
             except (ValueError, BadGitName):
@@ -1908,7 +1930,7 @@ class RunJob(BaseTask):
                 update_inventory_computed_fields.delay(inventory.id)
 
 
-@task()
+@task(queue=get_local_queuename)
 class RunProjectUpdate(BaseTask):
 
     model = ProjectUpdate
@@ -2269,7 +2291,7 @@ class RunProjectUpdate(BaseTask):
             # force option is necessary because remote refs are not counted, although no information is lost
             git_repo.delete_head(tmp_branch_name, force=True)
         else:
-            copy_tree(project_path, destination_folder)
+            copy_tree(project_path, destination_folder, preserve_symlinks=1)
 
     def post_run_hook(self, instance, status):
         # To avoid hangs, very important to release lock even if errors happen here
@@ -2318,7 +2340,7 @@ class RunProjectUpdate(BaseTask):
         return getattr(settings, 'AWX_PROOT_ENABLED', False)
 
 
-@task()
+@task(queue=get_local_queuename)
 class RunInventoryUpdate(BaseTask):
 
     model = InventoryUpdate
@@ -2586,7 +2608,7 @@ class RunInventoryUpdate(BaseTask):
             )
 
 
-@task()
+@task(queue=get_local_queuename)
 class RunAdHocCommand(BaseTask):
     '''
     Run an ad hoc command using ansible.
@@ -2776,7 +2798,7 @@ class RunAdHocCommand(BaseTask):
             isolated_manager_instance.cleanup()
 
 
-@task()
+@task(queue=get_local_queuename)
 class RunSystemJob(BaseTask):
 
     model = SystemJob
@@ -2850,11 +2872,16 @@ def _reconstruct_relationships(copy_mapping):
         new_obj.save()
 
 
-@task()
+@task(queue=get_local_queuename)
 def deep_copy_model_obj(
     model_module, model_name, obj_pk, new_obj_pk,
-    user_pk, sub_obj_list, permission_check_func=None
+    user_pk, uuid, permission_check_func=None
 ):
+    sub_obj_list = cache.get(uuid)
+    if sub_obj_list is None:
+        logger.error('Deep copy {} from {} to {} failed unexpectedly.'.format(model_name, obj_pk, new_obj_pk))
+        return
+
     logger.debug('Deep copy {} from {} to {}.'.format(model_name, obj_pk, new_obj_pk))
     from awx.api.generics import CopyAPIView
     from awx.main.signals import disable_activity_stream

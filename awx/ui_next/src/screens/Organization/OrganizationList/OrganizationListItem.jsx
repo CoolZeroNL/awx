@@ -5,14 +5,15 @@ import { t } from '@lingui/macro';
 import {
   Badge as PFBadge,
   Button,
-  DataListAction,
-  DataListCell,
+  DataListAction as _DataListAction,
   DataListCheck,
   DataListItem,
   DataListItemCells,
   DataListItemRow,
   Tooltip,
 } from '@patternfly/react-core';
+import DataListCell from '@components/DataListCell';
+
 import { Link } from 'react-router-dom';
 import styled from 'styled-components';
 import { PencilAltIcon } from '@patternfly/react-icons';
@@ -29,6 +30,13 @@ const ListGroup = styled.span`
   &:first-of-type {
     margin-left: 0;
   }
+`;
+
+const DataListAction = styled(_DataListAction)`
+  align-items: center;
+  display: grid;
+  grid-gap: 16px;
+  grid-template-columns: 40px;
 `;
 
 function OrganizationListItem({
@@ -82,7 +90,7 @@ function OrganizationListItem({
           aria-labelledby={labelId}
           id={labelId}
         >
-          {organization.summary_fields.user_capabilities.edit && (
+          {organization.summary_fields.user_capabilities.edit ? (
             <Tooltip content={i18n._(t`Edit Organization`)} position="top">
               <Button
                 variant="plain"
@@ -92,6 +100,8 @@ function OrganizationListItem({
                 <PencilAltIcon />
               </Button>
             </Tooltip>
+          ) : (
+            ''
           )}
         </DataListAction>
       </DataListItemRow>

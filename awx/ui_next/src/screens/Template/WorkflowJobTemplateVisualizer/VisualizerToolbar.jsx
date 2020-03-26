@@ -5,7 +5,7 @@ import {
 } from '@contexts/Workflow';
 import { withI18n } from '@lingui/react';
 import { t } from '@lingui/macro';
-import { func, shape } from 'prop-types';
+import { bool, func, shape } from 'prop-types';
 import {
   Badge as PFBadge,
   Button,
@@ -20,6 +20,7 @@ import {
   TrashAltIcon,
   WrenchIcon,
 } from '@patternfly/react-icons';
+import LaunchButton from '@components/LaunchButton';
 import styled from 'styled-components';
 
 const Badge = styled(PFBadge)`
@@ -45,17 +46,30 @@ const ActionButton = styled(Button)`
 `;
 ActionButton.displayName = 'ActionButton';
 
-function VisualizerToolbar({ i18n, onClose, onSave, template }) {
+const DOCLINK =
+  'https://docs.ansible.com/ansible-tower/latest/html/userguide/workflow_templates.html#ug-wf-editor';
+
+function VisualizerToolbar({
+  i18n,
+  onClose,
+  onSave,
+  template,
+  hasUnsavedChanges,
+}) {
   const dispatch = useContext(WorkflowDispatchContext);
 
   const { nodes, showLegend, showTools } = useContext(WorkflowStateContext);
 
   const totalNodes = nodes.reduce((n, node) => n + !node.isDeleted, 0) - 1;
+  const canLaunch =
+    template.summary_fields?.user_capabilities?.start && !hasUnsavedChanges;
 
   return (
     <div id="visualizer-toolbar">
       <div css="align-items: center; border-bottom: 1px solid grey; display: flex; height: 56px; padding: 0px 20px;">
-        <Title size="xl">{template.name}</Title>
+        <Title size="xl" id="visualizer-toolbar-template-name">
+          {template.name}
+        </Title>
         <div css="align-items: center; display: flex; flex: 1; justify-content: flex-end">
           <div>{i18n._(t`Total Nodes`)}</div>
           <Badge id="visualizer-total-nodes-badge" isRead>
@@ -84,15 +98,27 @@ function VisualizerToolbar({ i18n, onClose, onSave, template }) {
             </ActionButton>
           </Tooltip>
           <ActionButton
+            aria-label={i18n._(t`Workflow Documentation`)}
             id="visualizer-documentation"
             variant="plain"
-            isDisabled
+            component="a"
+            target="_blank"
+            href={DOCLINK}
           >
             <BookIcon />
           </ActionButton>
-          <ActionButton id="visualizer-launch" variant="plain" isDisabled>
-            <RocketIcon />
-          </ActionButton>
+          <LaunchButton resource={template} aria-label={i18n._(t`Launch`)}>
+            {({ handleLaunch }) => (
+              <ActionButton
+                id="visualizer-launch"
+                variant="plain"
+                isDisabled={!canLaunch}
+                onClick={handleLaunch}
+              >
+                <RocketIcon />
+              </ActionButton>
+            )}
+          </LaunchButton>
           <Tooltip content={i18n._(t`Delete All Nodes`)} position="bottom">
             <ActionButton
               id="visualizer-delete-all"
@@ -136,6 +162,7 @@ VisualizerToolbar.propTypes = {
   onClose: func.isRequired,
   onSave: func.isRequired,
   template: shape().isRequired,
+  hasUnsavedChanges: bool.isRequired,
 };
 
 export default withI18n()(VisualizerToolbar);

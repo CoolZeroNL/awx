@@ -4,13 +4,14 @@ import { withI18n } from '@lingui/react';
 import {
   Button,
   DataListAction as _DataListAction,
-  DataListCell,
   DataListCheck,
   DataListItem,
   DataListItemRow,
   DataListItemCells,
   Tooltip,
 } from '@patternfly/react-core';
+import DataListCell from '@components/DataListCell';
+
 import { t } from '@lingui/macro';
 import { Link } from 'react-router-dom';
 import { PencilAltIcon, SyncIcon } from '@patternfly/react-icons';
@@ -126,7 +127,7 @@ class ProjectListItem extends React.Component {
             aria-labelledby={labelId}
             id={labelId}
           >
-            {project.summary_fields.user_capabilities.start && (
+            {project.summary_fields.user_capabilities.start ? (
               <Tooltip content={i18n._(t`Sync Project`)} position="top">
                 <ProjectSyncButton projectId={project.id}>
                   {handleSync => (
@@ -140,8 +141,10 @@ class ProjectListItem extends React.Component {
                   )}
                 </ProjectSyncButton>
               </Tooltip>
+            ) : (
+              ''
             )}
-            {project.summary_fields.user_capabilities.edit && (
+            {project.summary_fields.user_capabilities.edit ? (
               <Tooltip content={i18n._(t`Edit Project`)} position="top">
                 <Button
                   css="grid-column: 2"
@@ -152,6 +155,8 @@ class ProjectListItem extends React.Component {
                   <PencilAltIcon />
                 </Button>
               </Tooltip>
+            ) : (
+              ''
             )}
           </DataListAction>
         </DataListItemRow>
